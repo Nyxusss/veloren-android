@@ -5,7 +5,7 @@ mod target;
 use std::{cell::RefCell, collections::HashSet, rc::Rc, result::Result, time::Duration};
 
 use itertools::Itertools;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use mumble_link::SharedLink;
 use ordered_float::OrderedFloat;
 use specs::WorldExt;
