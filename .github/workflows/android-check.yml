@@ -1,0 +1,22 @@
+name: Android check
+on: [workflow_dispatch, push]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --locked
+      - name: Check voxygen arm64
+        shell: bash
+        run: |
+          export ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME
+          cargo ndk -t arm64-v8a -P 28 check -p veloren-voxygen --lib \
+            --no-default-features --features singleplayer 2>&1 | tee check.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: check-log, path: check.log }
