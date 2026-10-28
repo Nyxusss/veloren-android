@@ -2050,4 +2050,356 @@ impl PlayState for SessionState {
                     },
                     HudEvent::Ability { idx, state } => {
                         self.client.borrow_mut().handle_input(
-                            InputKind::Abili
+                            InputKind::Ability(idx),
+                            state,
+                            default_select_pos,
+                            self.target_entity,
+                        );
+                    },
+
+                    HudEvent::RequestSiteInfo(id) => {
+                        self.client.borrow_mut().request_site_economy(id);
+                    },
+
+                    HudEvent::CraftRecipe {
+                        recipe_name: recipe,
+                        craft_sprite,
+                        amount,
+                    } => {
+                        let slots = {
+                            let client = self.client.borrow();
+
+                            if let Some(inventory) = client
+                                .state()
+                                .ecs()
+                                .read_storage::<comp::Inventory>()
+                                .get(client.entity())
+                            {
+                                let rbm =
+                                    client.state().ecs().read_resource::<RecipeBookManifest>();
+                                if let Some(recipe) = inventory.get_recipe(&recipe, &rbm) {
+                                    recipe.inventory_contains_ingredients(inventory, 1).ok()
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(slots) = slots {
+                            self.client.borrow_mut().craft_recipe(
+                                &recipe,
+                                slots,
+                                craft_sprite,
+                                amount,
+                            );
+                        }
+                    },
+
+                    HudEvent::CraftModularWeapon {
+                        primary_slot,
+                        secondary_slot,
+                        craft_sprite,
+                    } => {
+                        self.client.borrow_mut().craft_modular_weapon(
+                            primary_slot,
+                            secondary_slot,
+                            craft_sprite,
+                        );
+                    },
+
+                    HudEvent::CraftModularWeaponComponent {
+                        toolkind,
+                        material,
+                        modifier,
+                        craft_sprite,
+                    } => {
+                        let additional_slots = {
+                            let client = self.client.borrow();
+                            let item_id = |slot| {
+                                client
+                                    .inventories()
+                                    .get(client.entity())
+                                    .and_then(|inv| inv.get(slot))
+                                    .and_then(|item| {
+                                        item.item_definition_id().itemdef_id().map(String::from)
+                                    })
+                            };
+                            if let Some(material_id) = item_id(material) {
+                                let key = recipe::ComponentKey {
+                                    toolkind,
+                                    material: material_id,
+                                    modifier: modifier.and_then(item_id),
+                                };
+                                if let Some(recipe) = client.component_recipe_book().get(&key) {
+                                    client.inventories().get(client.entity()).and_then(|inv| {
+                                        recipe.inventory_contains_additional_ingredients(inv).ok()
+                                    })
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(additional_slots) = additional_slots {
+                            self.client.borrow_mut().craft_modular_weapon_component(
+                                toolkind,
+                                material,
+                                modifier,
+                                additional_slots,
+                                craft_sprite,
+                            );
+                        }
+                    },
+                    HudEvent::SalvageItem { slot, salvage_pos } => {
+                        self.client.borrow_mut().salvage_item(slot, salvage_pos);
+                    },
+                    HudEvent::RepairItem { item, sprite_pos } => {
+                        if !has_repaired {
+                            let sfx_trigger_item = sfx_triggers
+                                .0
+                                .get_key_value(&SfxEvent::from(&InventoryUpdateEvent::Craft));
+                            global_state.audio.emit_ui_sfx(sfx_trigger_item, None, None);
+                            has_repaired = true
+                        };
+                        self.client.borrow_mut().repair_item(item, sprite_pos);
+                    },
+                    HudEvent::InviteMember(uid) => {
+                        self.client.borrow_mut().send_invite(uid, InviteKind::Group);
+                    },
+                    HudEvent::AcceptInvite => {
+                        self.client.borrow_mut().accept_invite();
+                    },
+                    HudEvent::DeclineInvite => {
+                        self.client.borrow_mut().decline_invite();
+                    },
+                    HudEvent::KickMember(uid) => {
+                        self.client.borrow_mut().kick_from_group(uid);
+                    },
+                    HudEvent::LeaveGroup => {
+                        self.client.borrow_mut().leave_group();
+                    },
+                    HudEvent::AssignLeader(uid) => {
+                        self.client.borrow_mut().assign_group_leader(uid);
+                    },
+                    HudEvent::ChangeAbility(slot, new_ability) => {
+                        self.client.borrow_mut().change_ability(slot, new_ability);
+                    },
+                    HudEvent::SettingsChange(settings_change) => {
+                        settings_change.process(global_state, self);
+                    },
+                    HudEvent::AcknowledgePersistenceLoadError => {
+                        self.metadata.skill_set_persistence_load_error = None;
+                    },
+                    HudEvent::MapMarkerEvent(event) => {
+                        self.client.borrow_mut().map_marker_event(event);
+                    },
+                    HudEvent::Dialogue(target, dialogue) => {
+                        self.client.borrow_mut().perform_dialogue(target, dialogue);
+                    },
+                    HudEvent::SetBattleMode(mode) => {
+                        self.client.borrow_mut().set_battle_mode(mode);
+                    },
+                }
+            }
+
+            {
+                let client = self.client.borrow();
+                let scene_data = SceneData {
+                    client: &client,
+                    state: client.state(),
+                    viewpoint_entity,
+                    mutable_viewpoint: mutable_viewpoint || self.free_look,
+                    // Only highlight if interactable
+                    target_entities: &self.interactables.entities,
+                    loaded_distance: client.loaded_distance(),
+                    terrain_view_distance: client.view_distance().unwrap_or(1),
+                    entity_view_distance: client
+                        .view_distance()
+                        .unwrap_or(1)
+                        .min(global_state.settings.graphics.entity_view_distance),
+                    tick: client.get_tick(),
+                    gamma: global_state.settings.graphics.gamma,
+                    exposure: global_state.settings.graphics.exposure,
+                    ambiance: global_state.settings.graphics.ambiance,
+                    mouse_smoothing: global_state.settings.gameplay.smooth_pan_enable,
+                    sprite_render_distance: global_state.settings.graphics.sprite_render_distance
+                        as f32,
+                    particles_enabled: global_state.settings.graphics.particles_enabled,
+                    particles_chance: global_state.settings.graphics.particles_chance,
+                    weapon_trails_enabled: global_state.settings.graphics.weapon_trails_enabled,
+                    flashing_lights_enabled: global_state
+                        .settings
+                        .graphics
+                        .render_mode
+                        .flashing_lights_enabled,
+                    figure_lod_render_distance: global_state
+                        .settings
+                        .graphics
+                        .figure_lod_render_distance
+                        as f32,
+                    is_aiming,
+                    interpolated_time_of_day: self.scene.interpolated_time_of_day,
+                    wind_vel: self.scene.wind_vel,
+                };
+
+                // Runs if either in a multiplayer server or the singleplayer server is unpaused
+                if !global_state.paused() {
+                    self.scene.maintain(
+                        global_state.window.renderer_mut(),
+                        &mut global_state.audio,
+                        &scene_data,
+                        &client,
+                        &global_state.settings,
+                        global_state.settings.interface.minimap_face_north,
+                    );
+
+                    // Process outcomes from client
+                    for outcome in outcomes {
+                        self.scene
+                            .handle_outcome(&outcome, &scene_data, &mut global_state.audio);
+                        self.hud.handle_outcome(&outcome, &scene_data, global_state);
+                    }
+                }
+            }
+
+            // Clean things up after the tick.
+            self.cleanup();
+
+            PlayStateResult::Continue
+        } else if client_registered && client_presence.is_none() {
+            // If the client cannot enter the game but spectate, pop the play state instead
+            // of going back to character selection.
+            if client_type.can_spectate() && !client_type.can_enter_character() {
+                // Go back to the main menu state
+                PlayStateResult::Pop
+            } else {
+                PlayStateResult::Switch(Box::new(CharSelectionState::new(
+                    global_state,
+                    Rc::clone(&self.client),
+                    Rc::clone(&self.hud.persisted_state),
+                )))
+            }
+        } else {
+            error!("Client not in the expected state, exiting session play state");
+            PlayStateResult::Pop
+        }
+    }
+
+    fn name(&self) -> &'static str { "Session" }
+
+    fn capped_fps(&self) -> bool { false }
+
+    fn globals_bind_group(&self) -> &GlobalsBindGroup { self.scene.global_bind_group() }
+
+    /// Render the session to the screen.
+    ///
+    /// This method should be called once per frame.
+    fn render(&self, drawer: &mut Drawer<'_>, settings: &Settings) {
+        span!(_guard, "render", "<Session as PlayState>::render");
+
+        let client = self.client.borrow();
+
+        let (viewpoint_entity, mutable_viewpoint) = self.viewpoint_entity();
+
+        let scene_data = SceneData {
+            client: &client,
+            state: client.state(),
+            viewpoint_entity,
+            mutable_viewpoint,
+            // Only highlight if interactable
+            target_entities: &self.interactables.entities,
+            loaded_distance: client.loaded_distance(),
+            terrain_view_distance: client.view_distance().unwrap_or(1),
+            entity_view_distance: client
+                .view_distance()
+                .unwrap_or(1)
+                .min(settings.graphics.entity_view_distance),
+            tick: client.get_tick(),
+            gamma: settings.graphics.gamma,
+            exposure: settings.graphics.exposure,
+            ambiance: settings.graphics.ambiance,
+            mouse_smoothing: settings.gameplay.smooth_pan_enable,
+            sprite_render_distance: settings.graphics.sprite_render_distance as f32,
+            figure_lod_render_distance: settings.graphics.figure_lod_render_distance as f32,
+            particles_enabled: settings.graphics.particles_enabled,
+            particles_chance: settings.graphics.particles_chance,
+            weapon_trails_enabled: settings.graphics.weapon_trails_enabled,
+            flashing_lights_enabled: settings.graphics.render_mode.flashing_lights_enabled,
+            is_aiming: self.is_aiming,
+            interpolated_time_of_day: self.scene.interpolated_time_of_day,
+            wind_vel: self.scene.wind_vel,
+        };
+
+        // Render world
+        self.scene.render(
+            drawer,
+            client.state(),
+            viewpoint_entity,
+            client.get_tick(),
+            &scene_data,
+        );
+
+        if let Some(mut volumetric_pass) = drawer.volumetric_pass() {
+            // Clouds
+            prof_span!("clouds");
+            volumetric_pass.draw_clouds();
+        }
+        if let Some(mut transparent_pass) = drawer.transparent_pass() {
+            // Trails
+            prof_span!("trails");
+            if let Some(mut trail_drawer) = transparent_pass.draw_trails() {
+                self.scene
+                    .trail_mgr()
+                    .render(&mut trail_drawer, &scene_data);
+            }
+        }
+        // Bloom (call does nothing if bloom is off)
+        {
+            prof_span!("bloom");
+            drawer.run_bloom_passes()
+        }
+        // PostProcess and UI
+        {
+            prof_span!("post-process and ui");
+            let mut third_pass = drawer.third_pass();
+            third_pass.draw_postprocess();
+            // Draw the UI to the screen
+            if let Some(mut ui_drawer) = third_pass.draw_ui() {
+                self.hud.render(&mut ui_drawer);
+            }; // Note: this semicolon is needed for the third_pass borrow to be
+            // dropped before it's lifetime ends
+        }
+    }
+
+    fn egui_enabled(&self) -> bool { true }
+}
+
+// TODO: Can probably be exported in some way for AI, somehow
+fn auto_glide(
+    fluid: Fluid,
+    vel: Vel,
+    free_look: bool,
+    dir_forward_xy: Vec2<f32>,
+    dir_right: Vec3<f32>,
+) -> Option<Dir> {
+    let Vel(rel_flow) = fluid.relative_flow(&vel);
+
+    let is_wind_downwards = rel_flow.z.is_sign_negative();
+
+    let dir = if free_look {
+        if is_wind_downwards {
+            Vec3::from(-rel_flow.xy())
+        } else {
+            -rel_flow
+        }
+    } else if is_wind_downwards {
+        dir_forward_xy.into()
+    } else {
+        let windwards = rel_flow * dir_forward_xy.dot(rel_flow.xy()).signum();
+        Plane::from(Dir::new(dir_right)).projection(windwards)
+    };
+
+    Dir::from_unnormalized(dir)
+}
