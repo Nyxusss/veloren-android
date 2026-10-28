@@ -176,3 +176,5 @@ required-features = []
 [[bin]]
 name = "cmd_doc_gen"
 required-features = ["bin_cmd_doc_gen"]
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "0.30.12", features = ["serde", "android-native-activity"] }
